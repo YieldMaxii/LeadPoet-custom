@@ -1,13 +1,17 @@
 # Provider cost configuration for Lead Sorcerer
 # All costs are in USD per unit
 
+gse:
+  unit: 'request'
+  usd_per_unit: 0.0050  # Google Custom Search API cost
+
 openrouter:
   unit: '1k_tokens'
   usd_per_unit: 0.0020
 
-gse:
+scrapingdog:
   unit: 'request'
-  usd_per_unit: 0.0005
+  usd_per_unit: 0.0010  # 5 credits per request, ~$0.001 per credit
 
 firecrawl:
   unit: 'extract'

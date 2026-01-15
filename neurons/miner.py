@@ -183,7 +183,9 @@ class Miner(BaseMinerNeuron):
                     if not self.sourcing_mode:
                         continue
                     print("\n🔄 Sourcing new leads...")
-                new_leads = await get_leads(1, industry=None, region=None)
+                # Request 10 leads per pipeline run for better efficiency
+                # Pipeline generates ~30-45 raw leads, filters to ~10-15 complete
+                new_leads = await get_leads(10, industry=None, region=None)
                 
                 # Process leads through source provenance validation (protocol level)
                 validated_leads = await self.process_generated_leads(new_leads)

@@ -805,7 +805,7 @@ class DomainTool:
                 )
 
                 # Calculate costs
-                gse_cost = self.costs_config["gse"]
+                search_cost = self.costs_config["gse"]
                 openrouter_cost = self.costs_config["openrouter"]
 
                 # Estimate token usage (rough approximation)
@@ -822,7 +822,7 @@ class DomainTool:
                 total_tokens = prompt_tokens + response_tokens
                 token_cost = (total_tokens / 1000) * openrouter_cost
 
-                record["cost"]["domain_usd"] = round4(gse_cost + token_cost)
+                record["cost"]["domain_usd"] = round4(search_cost + token_cost)
                 recompute_total_cost(record)
 
             except Exception as e:

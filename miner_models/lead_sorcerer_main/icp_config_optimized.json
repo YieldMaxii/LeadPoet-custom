@@ -1,0 +1,187 @@
+{
+  "name": "AI/ML Leadership - Maximum Score Optimization",
+  "icp_text": "Small AI and Machine Learning startups with technical leadership (CEO, CTO, VP Engineering, Head of AI) for B2B technology partnerships and enterprise sales. Target companies with 2-50 employees in major tech hubs with established web presence.",
+
+  "queries": [
+    "AI startup CEO founder contact San Francisco",
+    "machine learning company CTO email Austin",
+    "artificial intelligence startup VP engineering LinkedIn",
+    "AI SaaS company founder contact New York",
+    "ML startup chief technology officer Boston",
+    "deep learning company CEO founder Seattle",
+    "NLP startup head of engineering contact",
+    "computer vision startup CTO LinkedIn",
+    "AI automation company founder email Denver",
+    "machine learning platform CEO contact Chicago",
+    "predictive analytics startup founder San Francisco",
+    "AI software company VP AI contact",
+    "generative AI startup CTO founder",
+    "enterprise AI company head of engineering"
+  ],
+
+  "threshold": 0.4,
+  "filtering_strict": true,
+
+  "search": {
+    "max_pages": 10,
+    "max_results_per_query": 100
+  },
+
+  "refresh_policy": {
+    "revisit_after_days": 90,
+    "failure_revisit_days": 7,
+    "domain_serp_ttl_hours": 48,
+    "crawl_ttl_days": 14,
+    "enrich_ttl_days": 30
+  },
+
+  "concurrency": {
+    "max_concurrent_requests": 5
+  },
+
+  "required_fields": {
+    "company": ["name", "industry", "sub_industry", "hq_location", "employee_count"],
+    "contact": ["email", "job_title", "full_name", "linkedin_url"]
+  },
+
+  "optional_fields": {
+    "company": ["revenue_range", "founded_year", "company_type", "number_of_locations", "ownership_type", "specialties"],
+    "contact": ["phone", "decision_maker", "department", "seniority"]
+  },
+
+  "caps": {
+    "company_usd": 0.03,
+    "contact_usd": 0.04,
+    "run_usd_max": 25.0,
+    "max_domains_per_run": 100,
+    "max_crawl_per_run": 100,
+    "max_enrich_per_run": 100
+  },
+
+  "role_priority": {
+    "ceo": 1,
+    "founder": 1,
+    "co-founder": 1,
+    "cto": 1,
+    "chief technology officer": 1,
+    "chief executive officer": 1,
+    "vp of engineering": 2,
+    "vp engineering": 2,
+    "head of engineering": 2,
+    "vp of ai": 2,
+    "vp ai": 2,
+    "head of ai": 2,
+    "director of ai": 2,
+    "vp of machine learning": 2,
+    "head of machine learning": 2,
+    "chief ai officer": 2,
+    "chief data officer": 2,
+    "engineering director": 3,
+    "principal software engineer": 3,
+    "staff software engineer": 3,
+    "lead software engineer": 3,
+    "senior software engineer": 4,
+    "software engineer": 5,
+    "default": 99
+  },
+
+  "exports": {
+    "enabled": true
+  },
+
+  "default_country": "US",
+
+  "exclusion_criteria": {
+    "ownership_types": [],
+    "max_locations": 50,
+    "excluded_keywords": ["recruiting", "staffing", "consulting firm", "freelance", "contractor"],
+    "min_employee_count": 2,
+    "max_employee_count": 1000
+  },
+
+  "targeting": {
+    "location_types": ["headquarters", "single_location"],
+    "company_sizes": ["small", "mid-market"],
+    "ownership_models": ["private", "public"],
+    "geographic_focus": [
+      "San Francisco", "New York", "Austin", "Boston", "Seattle",
+      "Denver", "Chicago", "Los Angeles", "San Diego", "Miami",
+      "London", "Berlin", "Toronto", "Tel Aviv", "Singapore"
+    ],
+    "target_industries": [
+      "Artificial Intelligence",
+      "Data and Analytics",
+      "Software",
+      "Science and Engineering"
+    ],
+    "target_sub_industries": [
+      "Artificial Intelligence",
+      "Machine Learning",
+      "Natural Language Processing",
+      "Predictive Analytics"
+    ]
+  },
+
+  "intent_config": {
+    "purpose": "ai_ml_partnerships",
+    "target_action": "enterprise_sales",
+    "intent_signals": {
+      "high_intent": [
+        "ai platform",
+        "machine learning solution",
+        "enterprise ai",
+        "ai automation",
+        "ml ops",
+        "ai infrastructure",
+        "deep learning",
+        "neural network",
+        "computer vision",
+        "natural language processing",
+        "predictive analytics",
+        "generative ai",
+        "llm",
+        "large language model",
+        "ai saas",
+        "ml platform"
+      ],
+      "medium_intent": [
+        "artificial intelligence",
+        "machine learning",
+        "data science",
+        "analytics platform",
+        "ai services",
+        "ml consulting",
+        "ai development"
+      ],
+      "low_intent": [
+        "not hiring",
+        "stealth mode",
+        "pre-launch",
+        "coming soon",
+        "closed beta"
+      ]
+    },
+    "intent_sources": [
+      "about_pages",
+      "team_pages",
+      "product_pages",
+      "careers_pages"
+    ],
+    "scoring_rules": {
+      "high_intent_weight": 0.9,
+      "medium_intent_weight": 0.5,
+      "low_intent_weight": -0.2,
+      "base_score": 0.4,
+      "location_bonus": 0.15,
+      "size_bonus": 0.15,
+      "leadership_bonus": 0.2
+    }
+  },
+
+  "validation_hints": {
+    "preferred_industries": ["Artificial Intelligence", "Data and Analytics", "Software", "Science and Engineering"],
+    "preferred_sub_industries": ["Artificial Intelligence", "Machine Learning", "Natural Language Processing", "Predictive Analytics"],
+    "preferred_employee_ranges": ["2-10", "11-50", "51-200"],
+    "avoid_employee_ranges": ["1,001-5,000", "5,001-10,000", "10,001+"]
+  }
+}
