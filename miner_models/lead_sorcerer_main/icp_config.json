@@ -1,122 +1,268 @@
 {
-  "name": "Startup Advisory Services - Test ICP",
-  "icp_text": "Small startup advisory and consulting firms with founder and advisor contact information for business development and partnership opportunities.",
+  "name": "US Manufacturing SMBs - Decision Makers",
+  "icp_text": "Small and medium-sized US manufacturing companies (10-500 employees) including metal fabrication, machining, plastics, food processing, and industrial equipment. Target owners, presidents, and operations leaders who make purchasing decisions.",
+
+  "pipeline_mode": "linkedin_first",
+
   "queries": [
-    "startup advisory services founder contact",
-    "business consulting firm advisor email"
+    "manufacturing company owner contact us USA -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "metal fabrication shop owner email -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "CNC machining company president contact -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "plastic injection molding company owner -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "custom manufacturing USA contact page -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "precision machining owner email address -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "sheet metal fabrication company contact -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "industrial manufacturing president email -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "food manufacturing company owner contact -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "packaging manufacturing USA owner -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "aerospace parts manufacturer contact us -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "automotive parts supplier owner email -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "welding fabrication shop owner contact -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "electronics manufacturing company president -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "medical device manufacturer contact page -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "tool and die shop owner email -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "contract manufacturer USA owner contact -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "powder coating company owner email -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "machine shop owner president contact -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "assembly manufacturing company contact us -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "stamping company owner email USA -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "extrusion company president contact -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "foundry owner contact information -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "woodworking manufacturing company owner -site:linkedin.com -site:indeed.com -site:glassdoor.com",
+    "textile manufacturing USA owner contact -site:linkedin.com -site:indeed.com -site:glassdoor.com"
   ],
-  "specific_urls": ["https://www.founderadvisors.tech/"],
-  "default_contact_linkedin": "https://www.linkedin.com/in/rogertoennis/",
+
+  "specific_urls": [],
+  "default_contact_linkedin": "",
+
   "required_fields": {
     "company": ["name", "industry", "sub_industry"],
     "contact": ["email", "job_title", "full_name"]
   },
+
   "optional_fields": {
     "company": ["hq_location", "revenue_range", "employee_count", "specialties", "founded_year", "company_type", "number_of_locations", "ownership_type"],
     "contact": ["phone", "linkedin_url", "decision_maker", "department", "seniority"]
   },
-  "threshold": 0.3,
+
+  "validation_config": {
+    "industry_keywords": [
+      "manufacturing",
+      "fabrication",
+      "machining",
+      "industrial",
+      "production",
+      "assembly",
+      "processing",
+      "molding",
+      "stamping",
+      "welding",
+      "cnc",
+      "precision",
+      "metal",
+      "plastic",
+      "aerospace",
+      "automotive",
+      "medical device",
+      "electronics",
+      "packaging",
+      "food processing",
+      "tool and die",
+      "machine shop",
+      "contract manufacturing",
+      "oem",
+      "supplier"
+    ],
+    "company_name_keywords": [
+      "manufacturing",
+      "fabrication",
+      "machining",
+      "industries",
+      "industrial",
+      "precision",
+      "metal",
+      "plastics",
+      "tool",
+      "machine",
+      "products",
+      "components",
+      "systems",
+      "solutions",
+      "works",
+      "corp",
+      "inc",
+      "llc",
+      "co"
+    ]
+  },
+
+  "threshold": 0.5,
   "filtering_strict": false,
   "mode": "fast",
+
   "refresh_policy": {
     "revisit_after_days": 90,
     "failure_revisit_days": 7,
-    "domain_serp_ttl_hours": 48,
+    "domain_serp_ttl_hours": 72,
     "crawl_ttl_days": 14,
     "enrich_ttl_days": 30
   },
+
   "concurrency": {
-    "max_concurrent_requests": 3
+    "max_concurrent_requests": 10
   },
+
   "search": {
     "max_pages": 5,
     "max_results_per_query": 50
   },
+
   "testing": {
-    "process_rejected": true,
-    "process_low_crawl": true,
+    "process_rejected": false,
+    "process_low_crawl": false,
     "force_contact_discovery": true
   },
+
   "caps": {
-    "company_usd": 0.02,
-    "contact_usd": 0.03,
-    "run_usd_max": 10.0,
-    "max_domains_per_run": 20,
-    "max_crawl_per_run": 20,
-    "max_enrich_per_run": 20
+    "company_usd": 0.03,
+    "contact_usd": 0.04,
+    "run_usd_max": 15.0,
+    "max_domains_per_run": 100,
+    "max_crawl_per_run": 100,
+    "max_enrich_per_run": 100
   },
+
   "role_priority": {
-    "founder": 1,
     "owner": 1,
-    "ceo": 1,
     "president": 1,
-    "advisor": 2,
+    "ceo": 1,
+    "chief executive officer": 1,
+    "founder": 1,
+    "co-founder": 1,
+    "principal": 1,
+    "general manager": 2,
+    "plant manager": 2,
+    "operations manager": 2,
+    "vp operations": 2,
+    "vice president operations": 2,
+    "vp manufacturing": 2,
+    "director of operations": 2,
+    "director of manufacturing": 2,
+    "coo": 2,
+    "chief operating officer": 2,
+    "managing director": 2,
     "partner": 2,
+    "vp": 3,
+    "vice president": 3,
     "director": 3,
-    "consultant": 4,
+    "sales manager": 4,
+    "purchasing manager": 4,
     "default": 99
   },
+
   "exports": {
     "enabled": true
   },
+
   "default_country": "US",
+  "default_source_type": "company_site",
+
   "exclusion_criteria": {
     "ownership_types": [],
-    "max_locations": 10000,
-    "excluded_keywords": []
+    "max_locations": 25,
+    "excluded_keywords": [
+      "fortune 500",
+      "multinational",
+      "global corporation",
+      "staffing",
+      "recruiting",
+      "jobs",
+      "careers page",
+      "temp agency",
+      "consulting"
+    ],
+    "min_employee_count": 5,
+    "max_employee_count": 500
   },
+
   "targeting": {
-    "location_types": ["headquarters", "single_location"],
-    "company_sizes": ["small", "mid-market"],
-    "ownership_models": ["private"],
-    "geographic_focus": ["North America", "United States"]
+    "location_types": ["headquarters", "single_location", "manufacturing_facility"],
+    "company_sizes": ["small", "medium"],
+    "ownership_models": ["private", "family-owned"],
+    "geographic_focus": ["United States"],
+    "sub_industries": [
+      "Metal Fabrication",
+      "CNC Machining",
+      "Plastic Injection Molding",
+      "Sheet Metal",
+      "Aerospace Manufacturing",
+      "Automotive Parts",
+      "Food Processing",
+      "Packaging Manufacturing",
+      "Electronics Manufacturing",
+      "Medical Device Manufacturing",
+      "Tool and Die",
+      "Welding and Fabrication",
+      "Assembly Manufacturing",
+      "Contract Manufacturing",
+      "Industrial Equipment"
+    ]
   },
+
   "intent_config": {
-    "purpose": "startup_advisory",
-    "target_action": "business_development",
+    "purpose": "b2b_manufacturing_outreach",
+    "target_action": "decision_maker_contact",
     "intent_signals": {
       "high_intent": [
-        "startup advisory",
-        "business consulting",
-        "founder coaching",
-        "mentoring services",
-        "advisory board",
-        "startup support",
-        "entrepreneur guidance",
-        "business development",
-        "strategic planning",
-        "coaching services"
+        "contact us",
+        "get a quote",
+        "request quote",
+        "rfq",
+        "request for quote",
+        "owner",
+        "president",
+        "about us",
+        "our team",
+        "leadership",
+        "management team",
+        "capabilities",
+        "services"
       ],
       "medium_intent": [
-        "business services",
-        "consulting",
-        "advisory services",
-        "professional services",
-        "business support",
-        "strategic advice",
-        "mentoring",
-        "coaching"
+        "manufacturing",
+        "fabrication",
+        "machining",
+        "production",
+        "facility",
+        "equipment",
+        "iso certified",
+        "quality"
       ],
       "low_intent": [
-        "not accepting clients",
-        "fully booked",
-        "no availability"
+        "careers",
+        "jobs",
+        "hiring",
+        "apply now",
+        "employment",
+        "fortune 500",
+        "investor relations"
       ]
     },
     "intent_sources": [
+      "contact_pages",
       "about_pages",
       "team_pages",
-      "contact_pages",
-      "services_pages"
+      "footer",
+      "quote_pages"
     ],
     "scoring_rules": {
-      "high_intent_weight": 0.8,
-      "medium_intent_weight": 0.4,
+      "high_intent_weight": 0.9,
+      "medium_intent_weight": 0.5,
       "low_intent_weight": -0.3,
-      "base_score": 0.5,
+      "base_score": 0.4,
       "location_bonus": 0.1,
-      "size_bonus": 0.1,
-      "leadership_bonus": 0.1
+      "size_bonus": 0.2,
+      "leadership_bonus": 0.3
     }
   }
 }
