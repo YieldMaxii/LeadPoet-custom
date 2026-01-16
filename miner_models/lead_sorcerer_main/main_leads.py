@@ -18,20 +18,33 @@ import os
 import sys
 import tempfile
 import shutil
+import time
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import logging
 from dotenv import load_dotenv
 
 # Import enrichment functions
 from miner_models.lead_sorcerer_main.src.enrichment import (
     parse_location,
+    US_STATES,
+    STATE_ABBR_TO_NAME,
     normalize_employee_count,
     normalize_linkedin_url,
     normalize_sub_industry,  # NEW: Map LLM sub_industries to taxonomy
     is_fake_address,  # NEW: Detect placeholder addresses
+    is_fake_city,
     is_lead_complete,
     get_missing_fields,
+    infer_state_from_city,
+    validate_location,
+    validate_industry_taxonomy,
+    validate_role_format,
+    validate_website_url,
+    validate_description,
+    validate_employee_count,
+    validate_linkedin_url,
+    validate_source_url,
     # Email pattern generation and TrueList validation
     get_verified_email,
     collect_email_candidates,
@@ -44,6 +57,7 @@ from miner_models.lead_sorcerer_main.src.enrichment import (
     # LinkedIn-first pipeline functions
     search_linkedin_decision_makers,
     find_company_domain,
+    clean_company_name_for_search,
     generate_linkedin_queries_with_llm,
     firecrawl_extract_company,
     # Pre-submission validation (matches gateway validation)
@@ -52,6 +66,15 @@ from miner_models.lead_sorcerer_main.src.enrichment import (
     clean_role_for_submission,
     # Lead scoring and ranking
     rank_leads,
+)
+from miner_models.lead_sorcerer_main.src.enrichment_cache import EnrichmentCache
+from miner_models.lead_sorcerer_main.src.enrichment_pipeline import (
+    FieldProvenance,
+    build_enrichment_config,
+    enrich_company_fields,
+    enrich_person_fields,
+    get_company_domain_cached,
+    passes_confidence_gating,
 )
 
 # Load environment variables from .env file
@@ -383,6 +406,14 @@ else:
             # Change to temp directory so relative paths work
             original_cwd = os.getcwd()
             try:
+                # Ensure names are always defined inside the processing scope
+                first_name = candidate.get("first_name", "") if "first_name" in candidate else first_name
+                last_name = candidate.get("last_name", "") if "last_name" in candidate else last_name
+                if full_name and (not first_name or not last_name):
+                    name_parts = full_name.split(maxsplit=1)
+                    first_name = first_name or (name_parts[0] if name_parts else "")
+                    last_name = last_name or (name_parts[1] if len(name_parts) > 1 else "")
+
                 os.chdir(temp_dir)
 
                 # Create configuration
@@ -547,7 +578,7 @@ else:
 
         all_candidates = []
         seen_linkedin_urls = set()
-        results_per_query = config.get("search", {}).get("max_results_per_query", 20)
+        results_per_query = config.get("search", {}).get("max_results_per_query", 10)
 
         # Step 1: Search LinkedIn for decision makers
         print(f"\n📍 Step 1: Searching LinkedIn for decision makers...")
@@ -591,15 +622,112 @@ else:
         email_candidates_by_idx = {}  # Map idx -> list of candidate emails
         skipped_count = 0
         firecrawl_used_count = 0
+        enrichment_cache = EnrichmentCache()
+        enrichment_config = build_enrichment_config(config)
 
         # Process more candidates than needed since some will fail email verification
         candidates_to_process = min(len(all_candidates), num_leads * 3)
+
+        def _should_verify_email(enriched: Dict[str, Any]) -> Tuple[bool, List[str]]:
+            errors: List[str] = []
+
+            company = enriched.get("company", "")
+            description = enriched.get("description", "")
+            industry = enriched.get("industry", "")
+            sub_industry = enriched.get("sub_industry", "")
+            country = enriched.get("country", "")
+            state = enriched.get("state", "")
+            city = enriched.get("city", "")
+            role = enriched.get("role", "")
+            full_name = enriched.get("full_name", "")
+            first_name = enriched.get("first_name", "")
+            last_name = enriched.get("last_name", "")
+            linkedin_url = enriched.get("linkedin_url", "")
+            company_linkedin = enriched.get("company_linkedin", "")
+            employee_count = enriched.get("employee_count", "")
+            domain = enriched.get("domain", "")
+            source_url = enriched.get("source_url") or (f"https://{domain}" if domain else "")
+
+            if not company:
+                errors.append("business_empty")
+            if not full_name or not first_name or not last_name:
+                errors.append("name_missing")
+            if not domain:
+                errors.append("domain_missing")
+
+            website = f"https://{domain}" if domain else ""
+            if website:
+                ok, err = validate_website_url(website)
+                if not ok:
+                    errors.append(f"website: {err}")
+            else:
+                errors.append("website_empty")
+
+            if not description:
+                if industry:
+                    description = f"{company} - {industry}"
+                else:
+                    description = f"{company} - Manufacturing company"
+
+            ok, err = validate_description(description)
+            if not ok:
+                errors.append(f"description: {err}")
+
+            ok, err = validate_employee_count(employee_count)
+            if not ok:
+                errors.append(f"employee_count: {err}")
+
+            ok, err = validate_role_format(role, full_name, company)
+            if not ok:
+                errors.append(f"role: {err}")
+
+            if linkedin_url:
+                ok, err = validate_linkedin_url(linkedin_url, "person")
+                if not ok:
+                    errors.append(f"linkedin: {err}")
+            else:
+                errors.append("linkedin_empty")
+
+            if company_linkedin:
+                ok, err = validate_linkedin_url(company_linkedin, "company")
+                if not ok:
+                    errors.append(f"company_linkedin: {err}")
+            else:
+                errors.append("company_linkedin_empty")
+
+            if source_url:
+                ok, err = validate_source_url(source_url, "company_site")
+                if not ok:
+                    errors.append(f"source_url: {err}")
+            else:
+                errors.append("source_url_empty")
+
+            ok, err = validate_location(city, state, country)
+            if not ok:
+                errors.append(f"location: {err}")
+
+            ok, err = validate_industry_taxonomy(industry, sub_industry)
+            if not ok:
+                errors.append(f"industry: {err}")
+
+            return len(errors) == 0, errors
 
         for idx, candidate in enumerate(all_candidates[:candidates_to_process]):
             full_name = candidate.get("full_name", "")
             company = candidate.get("company", "")
             role = candidate.get("role", "")
             linkedin_url = candidate.get("linkedin_url", "")
+            first_name = candidate.get("first_name", "")
+            last_name = candidate.get("last_name", "")
+            if full_name and (not first_name or not last_name):
+                name_parts = full_name.split(maxsplit=1)
+                first_name = first_name or (name_parts[0] if name_parts else "")
+                last_name = last_name or (name_parts[1] if len(name_parts) > 1 else "")
+
+            cleaned_company = clean_company_name_for_search(company)
+            if cleaned_company and cleaned_company != company:
+                print(f"   ℹ️ Cleaned company name: {company} -> {cleaned_company}")
+                company = cleaned_company
 
             # Skip if missing critical data
             if not full_name or not company:
@@ -609,9 +737,9 @@ else:
             print(f"\n🏢 [{idx+1}] {full_name} - {role} at {company}")
 
             try:
-                # Step 2: Find company domain
+                # Step 2: Find company domain (cached)
                 print(f"   🔍 Finding company domain...")
-                domain = await find_company_domain(company)
+                domain = await get_company_domain_cached(company, enrichment_cache, enrichment_config)
                 if domain:
                     print(f"   ✓ Found domain: {domain}")
                 else:
@@ -619,139 +747,181 @@ else:
                     skipped_count += 1
                     continue
 
-                # Step 3: Get company LinkedIn for employee count, description
-                print(f"   🔍 Getting company LinkedIn data...")
-                company_data = await search_company_linkedin_with_data(company)
-                company_linkedin = ""
-                employee_count = ""
-                description = ""
-                industry = ""
-                sub_industry = ""
-                hq_location = ""
+                # Step 3: Enrich company fields (cached + concurrent)
+                print(f"   🔍 Enriching company data...")
+                person_location = candidate.get("location", "")
+                person_task = None
+                if not role or not linkedin_url or not person_location:
+                    person_task = enrich_person_fields(
+                        full_name, company, enrichment_cache, enrichment_config
+                    )
 
-                if company_data:
-                    company_linkedin = company_data.get("linkedin_url", "")
-                    employee_count = company_data.get("employee_count", "")
-                    description = company_data.get("description", "")
-                    industry = company_data.get("industry", "")
+                company_task = enrich_company_fields(
+                    company, domain, enrichment_cache, enrichment_config
+                )
 
-                    if company_linkedin:
-                        print(f"   ✓ Company LinkedIn: {company_linkedin[:50]}...")
-                    if employee_count:
-                        print(f"   ✓ Employee count: {employee_count}")
-
-                # Step 3b: Check what's missing and use Firecrawl as fallback
-                missing_from_gse = []
-                if not description:
-                    missing_from_gse.append("description")
-                if not industry:
-                    missing_from_gse.append("industry")
-                if not employee_count:
-                    missing_from_gse.append("employee_count")
-                if not company_linkedin:
-                    missing_from_gse.append("company_linkedin")
-
-                # Use Firecrawl if GSE couldn't get critical fields
-                if missing_from_gse:
-                    print(f"   📋 Missing from GSE: {', '.join(missing_from_gse)}")
-                    print(f"   🔥 Trying Firecrawl fallback for missing data...")
-
-                    firecrawl_data = await firecrawl_extract_company(domain)
-                    if firecrawl_data:
-                        firecrawl_used_count += 1
-                        # Fill in missing fields from Firecrawl
-                        if not description and firecrawl_data.get("description"):
-                            description = firecrawl_data["description"]
-                            print(f"   ✓ Firecrawl: description found")
-                        if not industry and firecrawl_data.get("industry"):
-                            industry = firecrawl_data["industry"]
-                            print(f"   ✓ Firecrawl: industry = {industry}")
-                        if not sub_industry and firecrawl_data.get("sub_industry"):
-                            raw_sub = firecrawl_data["sub_industry"]
-                            raw_ind = firecrawl_data.get("industry", industry)
-                            norm_sub, norm_ind = normalize_sub_industry(raw_sub, raw_ind)
-                            sub_industry = norm_sub
-                            # Also update industry if normalization changed it
-                            if norm_ind and norm_ind != raw_ind:
-                                industry = norm_ind
-                            if sub_industry != raw_sub:
-                                print(f"   ✓ Firecrawl: sub_industry = {raw_sub} → {sub_industry}")
-                            else:
-                                print(f"   ✓ Firecrawl: sub_industry = {sub_industry}")
-                        if not employee_count and firecrawl_data.get("employee_count"):
-                            employee_count = normalize_employee_count(firecrawl_data["employee_count"])
-                            print(f"   ✓ Firecrawl: employee_count = {employee_count}")
-                        if not hq_location and firecrawl_data.get("hq_location"):
-                            fc_hq = firecrawl_data["hq_location"]
-                            # Only use if it's a real address (not "Not specified", etc.)
-                            if not is_fake_address(fc_hq):
-                                hq_location = fc_hq
-                                print(f"   ✓ Firecrawl: hq_location = {hq_location}")
-                            else:
-                                print(f"   ⚠️ Firecrawl: hq_location is placeholder: {fc_hq}")
-
-                # Step 3c: GSE fallback for location if Firecrawl didn't find it
-                if not hq_location or is_fake_address(hq_location):
-                    print(f"   🔍 GSE fallback: Searching Google for company location...")
-                    try:
-                        gse_location = await search_company_location(company, domain)
-                        if gse_location:
-                            hq_location = gse_location.get("hq_location", "")
-                            if hq_location:
-                                print(f"   ✓ GSE: hq_location = {hq_location}")
-                            # Also capture city/state/country directly from GSE
-                            if gse_location.get("city"):
-                                # Store for later use
-                                candidate["gse_city"] = gse_location.get("city")
-                                candidate["gse_state"] = gse_location.get("state")
-                                candidate["gse_country"] = gse_location.get("country")
-                        else:
-                            print(f"   ⚠️ GSE: No location found")
-                    except Exception as e:
-                        print(f"   ⚠️ GSE location search failed: {e}")
-
-                # Step 4: Collect email candidates (don't verify yet)
-                first_name = candidate.get("first_name", "")
-                last_name = candidate.get("last_name", "")
-
-                if first_name and last_name and domain:
-                    print(f"   📧 Collecting email candidates for {first_name} {last_name}@{domain}...")
-                    email_candidates = await collect_email_candidates(first_name, last_name, domain)
-                    if email_candidates:
-                        print(f"   ✓ Found {len(email_candidates)} email candidates")
-                        email_candidates_by_idx[len(enriched_candidates)] = email_candidates
-                    else:
-                        print(f"   ⚠️ No email candidates found")
-                        skipped_count += 1
-                        continue
+                if person_task:
+                    (company_fields, company_prov), (person_fields, person_prov) = await asyncio.gather(
+                        company_task, person_task
+                    )
                 else:
-                    print(f"   ⚠️ Missing name/domain for email generation")
-                    skipped_count += 1
-                    continue
+                    company_fields, company_prov = await company_task
+                    person_fields, person_prov = {}, {}
+                if any(p.source == "firecrawl" for p in company_prov.values()):
+                    firecrawl_used_count += 1
 
-                # Parse location - try LinkedIn first, then Firecrawl/GSE hq_location
-                location = candidate.get("location", "")
+                company_linkedin = company_fields.get("company_linkedin", "")
+                employee_count = company_fields.get("employee_count", "")
+                description = company_fields.get("description", "")
+                industry = company_fields.get("industry", "")
+                sub_industry = company_fields.get("sub_industry", "")
+                hq_location = company_fields.get("hq_location", "")
+                company_city = company_fields.get("city", "")
+                company_state = company_fields.get("state", "")
+                company_country = company_fields.get("country", "")
+                company_source_url = company_fields.get("source_url", "")
+                company_phone_numbers = company_fields.get("phone_numbers", [])
+                company_founded_year = company_fields.get("founded_year", "")
+                company_ownership_type = company_fields.get("ownership_type", "")
+                company_company_type = company_fields.get("company_type", "")
+                company_number_of_locations = company_fields.get("number_of_locations", "")
+                company_socials = company_fields.get("socials", {})
+
+                if company_linkedin:
+                    print(f"   ✓ Company LinkedIn: {company_linkedin[:50]}...")
+                if employee_count:
+                    print(f"   ✓ Employee count: {employee_count}")
+
+                # Step 3b: Enrich person fields if needed
+                lead_provenance = dict(company_prov)
+                if role:
+                    lead_provenance["role"] = FieldProvenance(
+                        source="linkedin_first",
+                        confidence=0.7,
+                        method="decision_maker_query",
+                        timestamp=time.time()
+                    )
+                if linkedin_url:
+                    lead_provenance["linkedin"] = FieldProvenance(
+                        source="linkedin_first",
+                        confidence=0.7,
+                        method="decision_maker_query",
+                        timestamp=time.time()
+                    )
+
+                if person_fields:
+                    if not role and person_fields.get("role"):
+                        role = person_fields.get("role")
+                    if not linkedin_url and person_fields.get("linkedin"):
+                        linkedin_url = person_fields.get("linkedin")
+                    if not person_location and person_fields.get("location"):
+                        person_location = person_fields.get("location")
+                lead_provenance.update(person_prov)
+
+                # Parse location - try LinkedIn/person location first
+                location = person_location or ""
                 country, state, city = parse_location(location)
+                if city and not is_fake_city(city):
+                    temp_country = country or "United States"
+                    valid_loc, _ = validate_location(city, state, temp_country)
+                    if valid_loc:
+                        country = temp_country
+                        lead_provenance["city"] = FieldProvenance(
+                            source="linkedin_first",
+                            confidence=0.6,
+                            method="person_location",
+                            timestamp=time.time()
+                        )
+                        lead_provenance["state"] = FieldProvenance(
+                            source="linkedin_first",
+                            confidence=0.6,
+                            method="person_location",
+                            timestamp=time.time()
+                        )
+                        lead_provenance["country"] = FieldProvenance(
+                            source="linkedin_first",
+                            confidence=0.6,
+                            method="person_location",
+                            timestamp=time.time()
+                        )
+                    else:
+                        city, state, country = "", "", ""
 
-                # If location not from LinkedIn, try Firecrawl/GSE hq_location
+                # If location not from LinkedIn, try company city/state/country
+                if not city and company_city:
+                    city = company_city
+                    state = company_state or state
+                    country = company_country or country
+                    if "city" in company_prov:
+                        lead_provenance["city"] = company_prov["city"]
+                    if "state" in company_prov:
+                        lead_provenance["state"] = company_prov["state"]
+                    if "country" in company_prov:
+                        lead_provenance["country"] = company_prov["country"]
+
+                # If still missing, try parsing hq_location
                 if not city and hq_location:
                     fc_country, fc_state, fc_city = parse_location(hq_location)
+
+                    if fc_state:
+                        state_key = fc_state.lower().strip().replace('.', '')
+                        state_key = STATE_ABBR_TO_NAME.get(state_key, state_key)
+                        if state_key not in US_STATES:
+                            fc_state = ""
+                            fc_city = ""
+                        else:
+                            fc_state = state_key.title()
+
                     if fc_city:
                         city = fc_city
+                        lead_provenance["city"] = FieldProvenance(
+                            source="hq_location",
+                            confidence=0.6,
+                            method="parse_location",
+                            timestamp=time.time()
+                        )
                     if fc_state:
                         state = fc_state
+                        lead_provenance["state"] = FieldProvenance(
+                            source="hq_location",
+                            confidence=0.6,
+                            method="parse_location",
+                            timestamp=time.time()
+                        )
                     if fc_country:
                         country = fc_country
-
-                # If still no city, try GSE direct city/state/country
-                if not city and candidate.get("gse_city"):
-                    city = candidate.get("gse_city", "")
-                    state = candidate.get("gse_state", "") or state
-                    country = candidate.get("gse_country", "") or country
+                        lead_provenance["country"] = FieldProvenance(
+                            source="hq_location",
+                            confidence=0.6,
+                            method="parse_location",
+                            timestamp=time.time()
+                        )
 
                 # Default to US if not detected
                 if not country:
                     country = "United States"
+
+                # Drop invalid US state values and try to infer from city
+                if country == "United States":
+                    if state:
+                        state_key = state.lower().strip().replace('.', '')
+                        state_key = STATE_ABBR_TO_NAME.get(state_key, state_key)
+                        if state_key not in US_STATES:
+                            print(f"   ⚠️ Dropping invalid state parsed from location: {state}")
+                            state = ""
+                        else:
+                            state = state_key.title()
+
+                    if city and not state:
+                        inferred_state = infer_state_from_city(city)
+                        if inferred_state:
+                            state = inferred_state
+                            lead_provenance["state"] = FieldProvenance(
+                                source="city_infer",
+                                confidence=0.55,
+                                method="city_state_lookup",
+                                timestamp=time.time()
+                            )
 
                 # Determine sub_industry - from Firecrawl, config, or default
                 # Apply normalization to ensure it matches taxonomy
@@ -772,6 +942,13 @@ else:
                     "industry": industry,
                     "sub_industry": final_sub_industry,
                     "hq_location": hq_location,
+                    "source_url": company_source_url,
+                    "phone_numbers": company_phone_numbers,
+                    "founded_year": company_founded_year,
+                    "ownership_type": company_ownership_type,
+                    "company_type": company_company_type,
+                    "number_of_locations": company_number_of_locations,
+                    "socials": company_socials,
                     "full_name": full_name,
                     "first_name": first_name,
                     "last_name": last_name,
@@ -780,7 +957,30 @@ else:
                     "country": country,
                     "state": state,
                     "city": city,
+                    "provenance": lead_provenance,
                 }
+                should_verify, verify_errors = _should_verify_email(enriched_data)
+                if not should_verify:
+                    print(f"   ⚠️ Skipping email verification for incomplete lead: {', '.join(verify_errors[:4])}")
+                    skipped_count += 1
+                    continue
+
+                # Step 4: Collect email candidates (don't verify yet)
+                if first_name and last_name and domain:
+                    print(f"   📧 Collecting email candidates for {first_name} {last_name}@{domain}...")
+                    email_candidates = await collect_email_candidates(first_name, last_name, domain)
+                    if email_candidates:
+                        print(f"   ✓ Found {len(email_candidates)} email candidates")
+                        email_candidates_by_idx[len(enriched_candidates)] = email_candidates
+                    else:
+                        print(f"   ⚠️ No email candidates found")
+                        skipped_count += 1
+                        continue
+                else:
+                    print(f"   ⚠️ Missing name/domain for email generation")
+                    skipped_count += 1
+                    continue
+
                 enriched_candidates.append(enriched_data)
                 print(f"   ✓ Candidate enriched (pending email verification)")
 
@@ -826,7 +1026,20 @@ else:
             company = enriched_data["company"]
             print(f"\n   ✓ [{idx+1}] {full_name} at {company} - email: {verified_email}")
 
+            lead_provenance = dict(enriched_data.get("provenance", {}))
+            lead_provenance["email"] = FieldProvenance(
+                source="truelist",
+                confidence=0.95,
+                method="batch_verify",
+                timestamp=time.time()
+            )
+
             # Build lead record with ALL required fields
+            source_url = enriched_data.get("source_url") or f"https://{enriched_data['domain']}"
+            phone_numbers = enriched_data.get("phone_numbers") or []
+            if isinstance(phone_numbers, str):
+                phone_numbers = [phone_numbers]
+
             legacy_lead = {
                 # Required company fields
                 "business": enriched_data["company"],
@@ -849,9 +1062,38 @@ else:
                 "company_linkedin": enriched_data["company_linkedin"],
                 "employee_count": enriched_data["employee_count"],
                 # Required source tracking
-                "source_url": f"https://{enriched_data['domain']}",
+                "source_url": source_url,
                 "source_type": "company_site",
+                # Optional fields (best effort)
+                "phone_numbers": phone_numbers,
+                "founded_year": enriched_data.get("founded_year") or "",
+                "ownership_type": enriched_data.get("ownership_type") or "",
+                "company_type": enriched_data.get("company_type") or "",
+                "number_of_locations": enriched_data.get("number_of_locations") or "",
+                "socials": enriched_data.get("socials") or {},
             }
+
+            # Normalize employee count early (avoid invalid placeholders)
+            employee_count_norm = normalize_employee_count(legacy_lead.get("employee_count", ""))
+            if employee_count_norm:
+                legacy_lead["employee_count"] = employee_count_norm
+            else:
+                legacy_lead["employee_count"] = ""
+
+            # Enforce industry taxonomy (fallback to ICP defaults if needed)
+            tax_valid, _ = validate_industry_taxonomy(
+                legacy_lead.get("industry", ""),
+                legacy_lead.get("sub_industry", "")
+            )
+            if not tax_valid:
+                target_cfg = config.get("targeting", {})
+                fallback_sub = (target_cfg.get("sub_industries") or [legacy_lead.get("sub_industry", "")])[0]
+                fallback_ind = (target_cfg.get("industries") or [legacy_lead.get("industry", "")])[0]
+                sub_norm, ind_norm = normalize_sub_industry(fallback_sub, fallback_ind)
+                if sub_norm:
+                    legacy_lead["sub_industry"] = sub_norm
+                if ind_norm:
+                    legacy_lead["industry"] = ind_norm
 
             # Check for missing required fields BEFORE validation
             required_fields = [
@@ -860,6 +1102,14 @@ else:
                 "linkedin", "company_linkedin", "description", "employee_count",
                 "source_url"
             ]
+
+            gate_ok, gate_failed = passes_confidence_gating(
+                required_fields, lead_provenance, enrichment_config.confidence_thresholds
+            )
+            if not gate_ok:
+                print(f"      ⚠️ Low-confidence fields: {', '.join(gate_failed)}")
+                skipped_count += 1
+                continue
             missing_required = [f for f in required_fields if not legacy_lead.get(f)]
 
             # State is required for US only
@@ -888,11 +1138,6 @@ else:
                 legacy_lead.get("business", "")
             )
             legacy_lead["role"] = role_cleaned
-
-            # Normalize employee count
-            employee_count_norm = normalize_employee_count(legacy_lead.get("employee_count", ""))
-            if employee_count_norm:
-                legacy_lead["employee_count"] = employee_count_norm
 
             # Validate
             is_valid, validation_errors = validate_lead_pre_submission(legacy_lead)
@@ -949,10 +1194,10 @@ else:
         # Check pipeline mode from config
         pipeline_mode = BASE_ICP_CONFIG.get("pipeline_mode", "website_first")
 
-        # LinkedIn-first requires GSE + ScrapingDog + OpenRouter (for query generation)
+        # LinkedIn-first requires GSE + OpenRouter (for query generation)
         # Firecrawl is optional fallback for missing fields
         if pipeline_mode == "linkedin_first":
-            required_env_vars = ["GSE_API_KEY", "GSE_CX", "SCRAPINGDOG_API_KEY", "OPENROUTER_KEY"]
+            required_env_vars = ["GSE_API_KEY", "GSE_CX", "OPENROUTER_KEY"]
             print("\n🔗 Pipeline Mode: LINKEDIN-FIRST")
             print("   → Primary source: LinkedIn profiles via GSE")
             print("   → OpenRouter: Dynamic query generation from ICP")
@@ -960,7 +1205,7 @@ else:
             print("   → Higher accuracy for decision makers")
         else:
             required_env_vars = [
-                "GSE_API_KEY", "GSE_CX", "SCRAPINGDOG_API_KEY", "OPENROUTER_KEY", "FIRECRAWL_KEY"
+                "GSE_API_KEY", "GSE_CX", "OPENROUTER_KEY", "FIRECRAWL_KEY"
             ]
             print("\n🌐 Pipeline Mode: WEBSITE-FIRST")
             print("   → Primary source: Company websites via Firecrawl")
@@ -1026,6 +1271,8 @@ else:
             enriched_linkedin_count = 0
             verified_email_count = 0
             validation_failed_count = 0
+            enrichment_cache = EnrichmentCache()
+            enrichment_config = build_enrichment_config(BASE_ICP_CONFIG)
 
             for record in lead_records:
                 try:
@@ -1058,6 +1305,7 @@ else:
 
                     # Convert to legacy format (includes initial enrichment)
                     legacy_lead = convert_lead_record_to_legacy_format(record)
+                    lead_provenance = {}
 
                     # Skip if no business name (can't enrich without it)
                     if not legacy_lead.get("business"):
@@ -1066,72 +1314,83 @@ else:
                         continue
 
                     # ============================================================
-                    # GSE LINKEDIN ENRICHMENT: Search LinkedIn via Google snippets
-                    # (NO direct LinkedIn scraping - uses GSE snippet data)
+                    # Enrichment: company + person fields (cached + concurrent)
                     # ============================================================
-
-                    # Enrich company data from LinkedIn GSE snippet
-                    if not legacy_lead.get("company_linkedin") or not legacy_lead.get("employee_count"):
-                        try:
-                            company_data = await search_company_linkedin_with_data(
-                                legacy_lead.get("business", "")
-                            )
-                            if company_data:
-                                # Set LinkedIn URL
-                                if company_data.get("linkedin_url") and not legacy_lead.get("company_linkedin"):
-                                    legacy_lead["company_linkedin"] = company_data["linkedin_url"]
-                                    enriched_linkedin_count += 1
-                                    print(f"   🔍 Found company LinkedIn: {company_data['linkedin_url'][:50]}...")
-
-                                # Fill missing fields from GSE snippet (FREE - no scraping!)
-                                if company_data.get("employee_count") and not legacy_lead.get("employee_count"):
-                                    legacy_lead["employee_count"] = company_data["employee_count"]
-                                    print(f"   📊 GSE snippet: employee_count = {company_data['employee_count']}")
-
-                                if company_data.get("description") and not legacy_lead.get("description"):
-                                    legacy_lead["description"] = company_data["description"]
-                                    print(f"   📝 GSE snippet: description extracted")
-
-                                if company_data.get("industry") and not legacy_lead.get("industry"):
-                                    legacy_lead["industry"] = company_data["industry"]
-                                    print(f"   🏭 GSE snippet: industry = {company_data['industry']}")
-
-                        except Exception as e:
-                            print(f"   ⚠️ Company LinkedIn GSE search failed: {e}")
-
-                    # Enrich person data from LinkedIn GSE snippet
-                    if not legacy_lead.get("linkedin") or not legacy_lead.get("role"):
-                        try:
-                            person_data = await search_person_linkedin_with_data(
+                    try:
+                        person_task = None
+                        if not legacy_lead.get("linkedin") or not legacy_lead.get("role"):
+                            person_task = enrich_person_fields(
                                 legacy_lead.get("full_name", ""),
-                                legacy_lead.get("business", "")
+                                legacy_lead.get("business", ""),
+                                enrichment_cache,
+                                enrichment_config
                             )
-                            if person_data:
-                                # Set LinkedIn URL
-                                if person_data.get("linkedin_url") and not legacy_lead.get("linkedin"):
-                                    legacy_lead["linkedin"] = person_data["linkedin_url"]
-                                    enriched_linkedin_count += 1
-                                    print(f"   🔍 Found person LinkedIn: {person_data['linkedin_url'][:50]}...")
 
-                                # Fill missing fields from GSE snippet (FREE - no scraping!)
-                                if person_data.get("role") and not legacy_lead.get("role"):
-                                    legacy_lead["role"] = person_data["role"]
-                                    print(f"   👔 GSE snippet: role = {person_data['role']}")
+                        company_task = enrich_company_fields(
+                            legacy_lead.get("business", ""), domain, enrichment_cache, enrichment_config
+                        )
 
-                                if person_data.get("location") and not legacy_lead.get("city"):
-                                    # Try to parse location into city/state
-                                    loc = person_data["location"]
-                                    city, state, country = parse_location(loc)
-                                    if city and not legacy_lead.get("city"):
-                                        legacy_lead["city"] = city
-                                    if state and not legacy_lead.get("state"):
-                                        legacy_lead["state"] = state
-                                    if country and not legacy_lead.get("country"):
-                                        legacy_lead["country"] = country
-                                    print(f"   📍 GSE snippet: location = {loc}")
+                        if person_task:
+                            (company_fields, company_prov), (person_fields, person_prov) = await asyncio.gather(
+                                company_task, person_task
+                            )
+                        else:
+                            company_fields, company_prov = await company_task
+                            person_fields, person_prov = {}, {}
 
-                        except Exception as e:
-                            print(f"   ⚠️ Person LinkedIn GSE search failed: {e}")
+                        lead_provenance.update(company_prov)
+                        lead_provenance.update(person_prov)
+
+                        if company_fields:
+                            if company_fields.get("company_linkedin") and not legacy_lead.get("company_linkedin"):
+                                legacy_lead["company_linkedin"] = company_fields["company_linkedin"]
+                                enriched_linkedin_count += 1
+                                print(f"   🔍 Found company LinkedIn: {company_fields['company_linkedin'][:50]}...")
+
+                            if company_fields.get("employee_count") and not legacy_lead.get("employee_count"):
+                                legacy_lead["employee_count"] = company_fields["employee_count"]
+                                print(f"   📊 Enriched employee_count = {company_fields['employee_count']}")
+
+                            if company_fields.get("description") and not legacy_lead.get("description"):
+                                legacy_lead["description"] = company_fields["description"]
+                                print(f"   📝 Enriched description")
+
+                            if company_fields.get("industry") and not legacy_lead.get("industry"):
+                                legacy_lead["industry"] = company_fields["industry"]
+                                print(f"   🏭 Enriched industry = {company_fields['industry']}")
+
+                            if company_fields.get("sub_industry") and not legacy_lead.get("sub_industry"):
+                                legacy_lead["sub_industry"] = company_fields["sub_industry"]
+
+                            if not legacy_lead.get("city") and company_fields.get("city"):
+                                legacy_lead["city"] = company_fields["city"]
+                            if not legacy_lead.get("state") and company_fields.get("state"):
+                                legacy_lead["state"] = company_fields["state"]
+                            if not legacy_lead.get("country") and company_fields.get("country"):
+                                legacy_lead["country"] = company_fields["country"]
+
+                        if person_fields:
+                            if person_fields.get("linkedin") and not legacy_lead.get("linkedin"):
+                                legacy_lead["linkedin"] = person_fields["linkedin"]
+                                enriched_linkedin_count += 1
+                                print(f"   🔍 Found person LinkedIn: {person_fields['linkedin'][:50]}...")
+
+                            if person_fields.get("role") and not legacy_lead.get("role"):
+                                legacy_lead["role"] = person_fields["role"]
+                                print(f"   👔 Enriched role = {person_fields['role']}")
+
+                            if person_fields.get("location") and not legacy_lead.get("city"):
+                                loc = person_fields["location"]
+                                city, state, country = parse_location(loc)
+                                if city and not legacy_lead.get("city"):
+                                    legacy_lead["city"] = city
+                                if state and not legacy_lead.get("state"):
+                                    legacy_lead["state"] = state
+                                if country and not legacy_lead.get("country"):
+                                    legacy_lead["country"] = country
+                                print(f"   📍 Enriched location = {loc}")
+                    except Exception as e:
+                        print(f"   ⚠️ Enrichment failed: {e}")
 
                     # ============================================================
                     # EMAIL PATTERN VERIFICATION: If no email, try pattern guessing
@@ -1147,11 +1406,26 @@ else:
                                 if verified_email:
                                     legacy_lead["email"] = verified_email
                                     verified_email_count += 1
+                                    lead_provenance["email"] = FieldProvenance(
+                                        source="truelist",
+                                        confidence=0.95,
+                                        method="pattern_verify",
+                                        timestamp=time.time()
+                                    )
                                     print(f"   ✅ Found verified email: {verified_email}")
                                 else:
                                     print(f"   ⚠️ No verified email pattern found")
                             except Exception as e:
                                 print(f"   ⚠️ Email verification failed: {e}")
+
+                    # If email already present, mark provenance
+                    if legacy_lead.get("email") and "email" not in lead_provenance:
+                        lead_provenance["email"] = FieldProvenance(
+                            source="lead_sorcerer",
+                            confidence=0.8,
+                            method="website_extraction",
+                            timestamp=time.time()
+                        )
 
                     # ============================================================
                     # COMPLETENESS CHECK: Skip incomplete leads
@@ -1162,6 +1436,19 @@ else:
                         # This prevents wasting rate limit quota on leads that will
                         # definitely be rejected by validators.
                         # ============================================================
+                        required_fields = [
+                            "business", "full_name", "first", "last", "email", "role",
+                            "website", "industry", "sub_industry", "country", "city",
+                            "linkedin", "company_linkedin", "description", "employee_count",
+                            "source_url"
+                        ]
+                        gate_ok, gate_failed = passes_confidence_gating(
+                            required_fields, lead_provenance, enrichment_config.confidence_thresholds
+                        )
+                        if not gate_ok:
+                            print(f"   ⚠️ Low-confidence fields: {', '.join(gate_failed)}")
+                            skipped_count += 1
+                            continue
 
                         # Step 1: Normalize location fields to match gateway expectations
                         city_norm, state_norm, country_norm = normalize_location_for_submission(

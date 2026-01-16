@@ -9,9 +9,6 @@ openrouter:
   unit: '1k_tokens'
   usd_per_unit: 0.0020
 
-scrapingdog:
-  unit: 'request'
-  usd_per_unit: 0.0010  # 5 credits per request, ~$0.001 per credit
 
 firecrawl:
   unit: 'extract'
